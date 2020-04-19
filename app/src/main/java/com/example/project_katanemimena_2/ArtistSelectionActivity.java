@@ -5,9 +5,15 @@ import androidx.recyclerview.widget.DividerItemDecoration;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
+import android.app.AlertDialog;
+import android.app.ProgressDialog;
+import android.content.DialogInterface;
 import android.content.Intent;
+import android.media.AudioManager;
+import android.media.MediaPlayer;
 import android.os.AsyncTask;
 import android.os.Bundle;
+import android.os.CountDownTimer;
 import android.util.Log;
 import android.view.View;
 import android.widget.Toast;
@@ -24,14 +30,16 @@ import java.util.ArrayList;
 import java.util.Random;
 
 public class ArtistSelectionActivity extends AppCompatActivity implements MyItemClickListener{
-
-    RecyclerView recyclerView;
-    LinearLayoutManager layoutManager;
-    MyAdapter mAdapter;
-    ArrayList<String> artists;
-    String[] songRequest;
-    String serverIP ="192.168.1.15";
+    private RecyclerView recyclerView;
+    private LinearLayoutManager layoutManager;
+    private MyAdapter mAdapter;
+    private ArrayList<String> artists;
+    private String[] songRequest;
+    private String serverIP ="192.168.1.15";
     private static int[] brokerPorts = {8900,8901,8902};
+    private ProgressDialog dialog;
+    private getArtists asyncTask;
+
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -57,10 +65,15 @@ public class ArtistSelectionActivity extends AppCompatActivity implements MyItem
         recyclerView.setAdapter(mAdapter);
 
         songRequest[0] = "all_artists";
+        songRequest[1] = "null";
 
-        new getArtists().execute(songRequest);
+        dialog = new ProgressDialog(ArtistSelectionActivity.this);
+
+        asyncTask = new getArtists();
+        asyncTask.execute(songRequest);
 
     }
+
 
     @Override
     public void onItemClick(View view, int position) {
@@ -74,12 +87,47 @@ public class ArtistSelectionActivity extends AppCompatActivity implements MyItem
     }
 
     private class getArtists extends AsyncTask<String[], Integer, ArrayList<String>> {
+        private String[] songRequestAsync;
+        private CountDownTimer countDownTimer;
+
+        @Override
+        protected void onPreExecute() {
+            countDownTimer = new CountDownTimer(10000, 1000) {
+
+                public void onTick(long millisUntilFinished) {
+
+                }
+
+                public void onFinish() {
+                    asyncTask.cancel(true);
+                    if(dialog.isShowing())
+                        dialog.cancel();
+                    new AlertDialog.Builder(ArtistSelectionActivity.this)
+                            .setTitle("Error")
+                            .setMessage("Error retrieving artists.\nDo you want to try again?")
+                            .setPositiveButton("YES", new DialogInterface.OnClickListener() {
+                                public void onClick(DialogInterface dialog, int which) {
+                                    asyncTask = new getArtists();
+                                    asyncTask.execute(songRequestAsync);
+                                }
+                            })
+                            .setNegativeButton("NO", null)
+                            .setIcon(android.R.drawable.ic_dialog_alert)
+                            .show();
+
+                }
+            }.start();
+            dialog.setMessage("Getting artists, please wait.");
+            dialog.show();
+        }
+
 
         protected void onProgressUpdate(Integer... progress) {
 
         }
 
         protected ArrayList<String> doInBackground(String[]... songRequests) {
+            songRequestAsync = songRequests[0];
             Socket requestSocket = new Socket();
             int brokerPort;
             ArrayList<String> artistsStrings = new ArrayList<>();
@@ -101,7 +149,7 @@ public class ArtistSelectionActivity extends AppCompatActivity implements MyItem
                 OutputStream outputStream = requestSocket.getOutputStream();
                 ObjectOutputStream objectOutputStream = new ObjectOutputStream(outputStream);
                 //send the request
-                objectOutputStream.writeObject(songRequest);
+                objectOutputStream.writeObject(songRequestAsync);
                 objectOutputStream.flush(); // send the message
 
                 inputStream = requestSocket.getInputStream();
@@ -121,6 +169,8 @@ public class ArtistSelectionActivity extends AppCompatActivity implements MyItem
         }
 
         protected void onPostExecute(ArrayList<String> result) {
+            dialog.dismiss();
+            countDownTimer.cancel();
             mAdapter.notifyDataSetChanged(result);
         }
     }

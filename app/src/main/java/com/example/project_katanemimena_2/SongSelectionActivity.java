@@ -1,18 +1,25 @@
 package com.example.project_katanemimena_2;
 
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.appcompat.widget.Toolbar;
 import androidx.recyclerview.widget.DividerItemDecoration;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
+import android.annotation.SuppressLint;
+import android.app.AlertDialog;
+import android.app.ProgressDialog;
+import android.content.DialogInterface;
 import android.content.Intent;
-import android.content.res.AssetFileDescriptor;
 import android.media.MediaPlayer;
 import android.os.AsyncTask;
 import android.os.Bundle;
+import android.os.CountDownTimer;
 import android.renderscript.Sampler;
 import android.util.Log;
+import android.view.Menu;
 import android.view.View;
+import android.widget.ImageButton;
 import android.widget.Toast;
 
 import java.io.DataInputStream;
@@ -31,16 +38,28 @@ import java.util.Random;
 
 public class SongSelectionActivity extends AppCompatActivity implements MyItemClickListener{
 
-    RecyclerView recyclerView;
-    LinearLayoutManager layoutManager;
-    MyAdapter mAdapter;
-    ArrayList<String> songs;
-    int brokerPort;
-    byte[] songData;
-    URI uri;
-    String[] songRequest = new String[2];
-    String serverIP ="192.168.1.15";
+    private RecyclerView recyclerView;
+    private LinearLayoutManager layoutManager;
+    private MyAdapter mAdapter;
+    private ArrayList<String> songs;
+    private int brokerPort;
+    private byte[] songData;
+    private URI uri;
+    private String[] songRequest = new String[2];
+    private String serverIP ="192.168.1.15";
     private static int[] brokerPorts = {8900,8901,8902};
+    private MediaPlayer mediaPlayer;
+    //Used to pause/resume MediaPlayer
+    private int resumePosition;
+
+    private ProgressDialog dialogSongs;
+    private ProgressDialog dialogData;
+
+    private getSongs asyncTaskGetSong;
+    private getSongData asyncTaskGetData;
+
+    private ImageButton ib_play_pause;
+
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -71,7 +90,36 @@ public class SongSelectionActivity extends AppCompatActivity implements MyItemCl
         songRequest[0] = intent.getStringExtra("artist");
         songRequest[1] = "all_songs";
 
-        new getSongs().execute(songRequest);
+        initMediaPlayer();
+
+        dialogSongs = new ProgressDialog(SongSelectionActivity.this);
+
+        ib_play_pause = (ImageButton) findViewById(R.id.play_pause_button);
+        ib_play_pause.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                if(mediaPlayer.isPlaying()){
+                    pauseMedia();
+                    ib_play_pause.setImageResource(R.drawable.play_arrow);
+                }
+                else{
+                    new getSongData().execute(songRequest);
+                    ib_play_pause.setImageResource(R.drawable.pause);
+                }
+            }
+        });
+
+        final ImageButton ib_stop = (ImageButton) findViewById(R.id.stop_button);
+        ib_stop.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                ib_play_pause.setImageResource(R.drawable.play_arrow);
+                stopMedia();
+            }
+        });
+
+        asyncTaskGetSong = new getSongs();
+        asyncTaskGetSong.execute(songRequest);
     }
 
     @Override
@@ -80,21 +128,54 @@ public class SongSelectionActivity extends AppCompatActivity implements MyItemCl
         if(song != null){
             //Toast.makeText(this,"SONG "+song, Toast.LENGTH_SHORT).show();
             songRequest[1] = song;
-            new getSongData().execute(songRequest);
+            ib_play_pause.setImageResource(R.drawable.play_arrow);
         }
     }
 
     private class getSongs extends AsyncTask<String[], Integer, ArrayList<String>> {
-        private String[] songRequest;
+        private String[] songRequestAsync;
         private Socket requestSocket;
         private int code,threadPort;
         ArrayList<String> songStrings;
+        private CountDownTimer countDownTimer;
+
+        @Override
+        protected void onPreExecute() {
+            dialogSongs.setMessage("Getting songs, please wait.");
+            dialogSongs.show();
+            countDownTimer = new CountDownTimer(10000, 1000) {
+
+                public void onTick(long millisUntilFinished) {
+
+                }
+
+                public void onFinish() {
+                    asyncTaskGetSong.cancel(true);
+                    if(dialogSongs.isShowing())
+                        dialogSongs.cancel();
+                    new AlertDialog.Builder(SongSelectionActivity.this)
+                            .setTitle("Error")
+                            .setMessage("Error retrieving songs.\nDo you want to try again?")
+                            .setPositiveButton("Yes", new DialogInterface.OnClickListener() {
+                                public void onClick(DialogInterface dialog, int which) {
+                                    asyncTaskGetSong = new getSongs();
+                                    asyncTaskGetSong.execute(songRequestAsync);
+                                }
+                            })
+                            .setNegativeButton("NO", null)
+                            .setIcon(android.R.drawable.ic_dialog_alert)
+                            .show();
+
+                }
+            }.start();
+        }
+
         protected void onProgressUpdate(Integer... progress) {
 
         }
 
         protected ArrayList<String> doInBackground(String[]... songRequests) {
-            songRequest = songRequests[0];
+            songRequestAsync = songRequests[0];
             requestSocket = new Socket();
             songStrings = new ArrayList<>();
             //we reach out to a random broker
@@ -129,7 +210,7 @@ public class SongSelectionActivity extends AppCompatActivity implements MyItemCl
             OutputStream outputStream = requestSocket.getOutputStream();
             ObjectOutputStream objectOutputStream = new ObjectOutputStream(outputStream);
             //send the request
-            objectOutputStream.writeObject(songRequest);
+            objectOutputStream.writeObject(songRequestAsync);
             objectOutputStream.flush(); // send the message
             inputStream = requestSocket.getInputStream();
             dataInputStream = new DataInputStream(inputStream);
@@ -147,25 +228,65 @@ public class SongSelectionActivity extends AppCompatActivity implements MyItemCl
         }
 
         protected void onPostExecute(ArrayList<String> result) {
+            dialogSongs.dismiss();
+            dialogSongs=null;
+            countDownTimer.cancel();
             mAdapter.notifyDataSetChanged(result);
         }
     }
 
     private class getSongData extends AsyncTask<String[], Integer, byte[]> {
-        private String[] songRequest;
+        private String[] songRequestAsync;
         private Socket requestSocket;
         private int code,threadPort;
-        private MediaPlayer mediaPlayer = new MediaPlayer();
         byte[] songData;
+        CountDownTimer countDownTimer;
+
         protected void onProgressUpdate(Integer... progress) {
 
         }
 
+        @Override
+        protected void onPreExecute() {
+            dialogData = new ProgressDialog(SongSelectionActivity.this);
+            dialogData.setMessage("Getting song data, please wait.");
+            dialogData.show();
+            countDownTimer = new CountDownTimer(10000, 1000) {
+
+                public void onTick(long millisUntilFinished) {
+
+                }
+
+                public void onFinish() {
+                    asyncTaskGetData.cancel(true);
+                    if(dialogData.isShowing())
+                        dialogData.cancel();
+                    new AlertDialog.Builder(SongSelectionActivity.this)
+                            .setTitle("Error")
+                            .setMessage("Error retrieving songData.\nDo you want to try again?")
+                            .setPositiveButton("YES", new DialogInterface.OnClickListener() {
+                                public void onClick(DialogInterface dialog, int which) {
+                                    asyncTaskGetData = new getSongData();
+                                    asyncTaskGetData.execute(songRequestAsync);
+                                }
+                            })
+                            .setNegativeButton("NO", null)
+                            .setIcon(android.R.drawable.ic_dialog_alert)
+                            .show();
+
+                }
+            }.start();
+        }
+
         protected byte[] doInBackground(String[]... songRequests) {
-            songRequest = songRequests[0];
+            songRequestAsync = songRequests[0];
             requestSocket = new Socket();
             try {
-                connectAndSendRequest();
+                if(checkDownload(songRequestAsync[1])){
+
+                }
+                else
+                    connectAndSendRequest();
                 requestSocket.close();
 
 
@@ -190,26 +311,27 @@ public class SongSelectionActivity extends AppCompatActivity implements MyItemCl
             OutputStream outputStream = requestSocket.getOutputStream();
             ObjectOutputStream objectOutputStream = new ObjectOutputStream(outputStream);
             //send the request
-            objectOutputStream.writeObject(songRequest);
+            objectOutputStream.writeObject(songRequestAsync);
             objectOutputStream.flush(); // send the message
             inputStream = requestSocket.getInputStream();
             dataInputStream = new DataInputStream(inputStream);
             code =  dataInputStream.readInt(); //read code
             if(code == threadPort){
-                int size = dataInputStream.readInt();
-                songData = new byte[size];
+                int packets = dataInputStream.readInt();
+                songData = new byte[packets*512];
 
-                Log.d("LOG CAT:","SIZE : " + size);
+                Log.d("LOG CAT:","PACKETS : " + packets);
                 ObjectInputStream objectInputStream = new ObjectInputStream(inputStream);
                 byte[] chunk = new byte[512];
-                chunk = (byte[])objectInputStream.readObject();
-                int i=0;
+                int i=1;
                 //we need to reassemple the array with the chucks to get the full song
-                while(i<(size/512)-512){
-                    System.arraycopy(chunk,0, songData,i*512,512);
+                do{
+                    Log.d("LOG CAT:","TIMES : " + i);
                     chunk = (byte[])objectInputStream.readObject();
+                    System.arraycopy(chunk,0, songData,(i-1)*512,512);
                     i++;
-                }
+                } while(i<packets);
+                Log.d("LOG CAT:","TIMES : " + i);
                 requestSocket.close();
             }
             else{
@@ -222,6 +344,8 @@ public class SongSelectionActivity extends AppCompatActivity implements MyItemCl
         }
 
         protected void onPostExecute(byte[] result) {
+            dialogData.dismiss();
+            countDownTimer.cancel();
             playMp3(result);
 /*            // create temp file that will hold byte array
             File tempMp3 = null;
@@ -246,10 +370,14 @@ public class SongSelectionActivity extends AppCompatActivity implements MyItemCl
 
         }
 
+        private boolean checkDownload(String song){
+            return false;
+        }
+
         private void playMp3(byte[] mp3SoundByteArray) {
             try {
                 // create temp file that will hold byte array
-                File tempMp3 = File.createTempFile("kurchina", "mp3", getCacheDir());
+                File tempMp3 = File.createTempFile("temp", "mp3", getCacheDir());
                 tempMp3.deleteOnExit();
                 FileOutputStream fos = new FileOutputStream(tempMp3);
                 fos.write(mp3SoundByteArray);
@@ -268,11 +396,51 @@ public class SongSelectionActivity extends AppCompatActivity implements MyItemCl
                 mediaPlayer.setDataSource(fis.getFD());
 
                 mediaPlayer.prepare();
-                mediaPlayer.start();
+                playMedia();
             } catch (IOException ex) {
                 String s = ex.toString();
                 ex.printStackTrace();
             }
         }
+    }
+    //mediaPlayer
+
+    private void initMediaPlayer() {
+        mediaPlayer = new MediaPlayer();
+    }
+
+    private void playMedia() {
+        if (!mediaPlayer.isPlaying()) {
+            mediaPlayer.start();
+        }
+    }
+
+    private void stopMedia() {
+        if (mediaPlayer == null) return;
+        if (mediaPlayer.isPlaying()) {
+            mediaPlayer.stop();
+        }
+    }
+
+    private void pauseMedia() {
+        if (mediaPlayer.isPlaying()) {
+            mediaPlayer.pause();
+            resumePosition = mediaPlayer.getCurrentPosition();
+        }
+    }
+
+    private void resumeMedia() {
+        if (!mediaPlayer.isPlaying()) {
+            mediaPlayer.seekTo(resumePosition);
+            mediaPlayer.start();
+        }
+    }
+
+    @Override
+    protected void onDestroy() {
+        stopMedia();
+        mediaPlayer.release();
+        mediaPlayer = null;
+        super.onDestroy();
     }
 }
