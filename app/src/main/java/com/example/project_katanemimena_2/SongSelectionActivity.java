@@ -60,6 +60,8 @@ public class SongSelectionActivity extends AppCompatActivity implements MyItemCl
 
     private ImageButton ib_play_pause;
 
+    private boolean downloadSong;
+    private ArrayList<String> downloadedSongs;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -68,6 +70,9 @@ public class SongSelectionActivity extends AppCompatActivity implements MyItemCl
         setContentView(R.layout.activity_song);
 
         songs = new ArrayList<>();
+
+        downloadedSongs = new ArrayList<>();
+        downloadSong=false;
 
         Intent intent = getIntent();
 
@@ -103,6 +108,7 @@ public class SongSelectionActivity extends AppCompatActivity implements MyItemCl
                     ib_play_pause.setImageResource(R.drawable.play_arrow);
                 }
                 else{
+                    downloadSong=false;
                     new getSongData().execute(songRequest);
                     ib_play_pause.setImageResource(R.drawable.pause);
                 }
@@ -115,6 +121,15 @@ public class SongSelectionActivity extends AppCompatActivity implements MyItemCl
             public void onClick(View v) {
                 ib_play_pause.setImageResource(R.drawable.play_arrow);
                 stopMedia();
+            }
+        });
+
+        final ImageButton ib_download = (ImageButton) findViewById(R.id.download_button);
+        ib_download.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                downloadSong=true;
+                new getSongData().execute(songRequest);
             }
         });
 
@@ -280,16 +295,13 @@ public class SongSelectionActivity extends AppCompatActivity implements MyItemCl
 
         protected byte[] doInBackground(String[]... songRequests) {
             songRequestAsync = songRequests[0];
-            requestSocket = new Socket();
+            boolean downloadBool = checkDownload(songRequestAsync[1]);
             try {
-                if(checkDownload(songRequestAsync[1])){
-
-                }
-                else
+                if(!downloadBool){
+                    requestSocket = new Socket();
                     connectAndSendRequest();
-                requestSocket.close();
-
-
+                    requestSocket.close();
+                }
             } catch (IOException | ClassNotFoundException e) {
                 e.printStackTrace();
             }
@@ -346,61 +358,68 @@ public class SongSelectionActivity extends AppCompatActivity implements MyItemCl
         protected void onPostExecute(byte[] result) {
             dialogData.dismiss();
             countDownTimer.cancel();
-            playMp3(result);
-/*            // create temp file that will hold byte array
-            File tempMp3 = null;
+            if(downloadSong)
+                saveSong(result,songRequestAsync[1]);
+            else
+                playMp3(result,songRequestAsync[1]);
+        }
+
+        private void saveSong(byte[] result,String filename) {
+/*            File path = new File(getApplicationContext().getFilesDir(),
+                    "/DownloadMP3s");
+            path.mkdirs();*/
+            File destination = new File(getApplicationContext().getFilesDir(),
+                    "/DownloadMP3s/"+filename + ".mp3");
             try {
-
-
-
-                tempMp3 = File.createTempFile("temp", "mp3");
-                tempMp3.deleteOnExit();
-                FileOutputStream fos = new FileOutputStream(tempMp3);
+                destination.createNewFile();
+                FileOutputStream fos = new FileOutputStream(destination);
                 fos.write(result);
                 fos.close();
-                AssetFileDescriptor afd = getAssets().openFd("temp.mp3");
-                MediaPlayer player = new MediaPlayer();
-                player.setDataSource(afd.getFileDescriptor(),afd.getStartOffset(),afd.getLength());
-                player.prepare();
-                player.start();
-
+                downloadedSongs.add(filename);
             } catch (IOException e) {
                 e.printStackTrace();
-            }*/
-
+            }
         }
 
         private boolean checkDownload(String song){
+            for(String downloadedSong:downloadedSongs){
+                if(downloadedSong.equals(song))
+                    return true;
+            }
             return false;
         }
 
-        private void playMp3(byte[] mp3SoundByteArray) {
+        private void playMp3(byte[] mp3SoundByteArray,String filename) {
+            File file = null;
+            if(checkDownload(filename)){
+                file = new File(getApplicationContext().getFilesDir(),
+                        "/DownloadMP3s/"+filename + ".mp3");
+
+            }
+            else {
+                try {
+                    // create temp file that will hold byte array
+                    file = File.createTempFile("temp", "mp3", getCacheDir());
+                    file.deleteOnExit();
+                    FileOutputStream fos = new FileOutputStream(file);
+                    fos.write(mp3SoundByteArray);
+                    fos.close();
+                } catch (IOException ex) {
+                    String s = ex.toString();
+                    ex.printStackTrace();
+                }
+            }
+
             try {
-                // create temp file that will hold byte array
-                File tempMp3 = File.createTempFile("temp", "mp3", getCacheDir());
-                tempMp3.deleteOnExit();
-                FileOutputStream fos = new FileOutputStream(tempMp3);
-                fos.write(mp3SoundByteArray);
-                fos.close();
-
-                // resetting mediaplayer instance to evade problems
                 mediaPlayer.reset();
-
-                // In case you run into issues with threading consider new instance like:
-                // MediaPlayer mediaPlayer = new MediaPlayer();
-
-                // Tried passing path directly, but kept getting
-                // "Prepare failed.: status=0x1"
-                // so using file descriptor instead
-                FileInputStream fis = new FileInputStream(tempMp3);
+                FileInputStream fis = new FileInputStream(file);
                 mediaPlayer.setDataSource(fis.getFD());
-
                 mediaPlayer.prepare();
                 playMedia();
-            } catch (IOException ex) {
-                String s = ex.toString();
-                ex.printStackTrace();
+            } catch (IOException e) {
+                e.printStackTrace();
             }
+
         }
     }
     //mediaPlayer

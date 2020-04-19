@@ -44,7 +44,7 @@
 
         <ImageButton
             android:src="@drawable/download"
-            android:id="@+id/pause_button"
+            android:id="@+id/download_button"
             android:scaleType="fitCenter"
             android:minHeight="100dp"
             android:layout_weight="1"
